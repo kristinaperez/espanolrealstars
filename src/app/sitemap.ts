@@ -4,7 +4,7 @@ import { getExamBlocks, getLessonNumbers } from "@/lib/content/loader";
 // Required for `output: "export"` builds.
 export const dynamic = "force-static";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://espanol-real.example.com";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://espanol-real.example.com";
 
 /**
  * Generated from the JSON content, so adding lessons automatically extends the sitemap.

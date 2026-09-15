@@ -12,9 +12,9 @@
 | Повторение | Интервалы 1 → 3 → 7 → 30 → 90 дней, очередь ошибок, дневное повторение |
 | Геймификация | XP, уровни (Новичок → Native Killer), серия дней, комбо-бонусы, 15 достижений, календарь, цель дня, сердечки (опция, выключены) |
 | Карта адаптации | 11 этапов жизни в Испании: от «Первых дней» до «Чувствую себя как дома» |
-| Монетизация | 7 бесплатных уроков + Premium разово: 15 € по лицензионному ключу `XXXX-XXXX-XXXX` **или** 500 ⭐ Telegram Stars |
-| Telegram | Вход через Login Widget / Mini App, оплата Stars, подтверждение вебхуком — без доверия клиенту |
+| Монетизация | 7 бесплатных уроков + Premium **500 ⭐ Telegram Stars** (или лицензионный ключ) |
 | Прогресс | localStorage: уроки, ошибки, XP, серия, расписание повторения, достижения, дата старта триала, ключ Premium |
+| Оплата | Вход через Telegram + **Telegram Stars (500 ⭐)**: invoice → вебхук → лицензионный ключ |
 | SEO | robots.txt, sitemap.xml, Open Graph, Twitter cards, Schema.org (Course / LearningResource), метатеги каждого урока |
 | PWA | manifest, service worker, офлайн-режим, установка на телефон |
 
@@ -22,10 +22,115 @@
 
 Next.js (App Router) · React 19 · TypeScript · Tailwind CSS v4 · компоненты в стиле shadcn/ui.
 
-Ядро курса (уроки, упражнения, прогресс) по-прежнему работает без бэкенда — всё в localStorage.
-Postgres + несколько API-роутов добавлены **только** для Telegram-входа и Stars-платежей, которые физически не могут
-быть проверены на клиенте (нужен секрет бота). Без настроенного бота приложение ведёт себя как раньше: без БД, без
-авторизации, чисто статический контент + localStorage.
+Обучение полностью офлайн (localStorage). Сервер + PostgreSQL нужны **только** для Telegram-входа,
+оплаты звёздами и восстановления покупки. Если API недоступен, тренажёр продолжает работать локально,
+а Premium активируется лицензионным ключом.
+
+## Telegram: вход и оплата звёздами
+
+Premium после урока 7 покупается за **500 Telegram Stars** (цена настраивается: `TELEGRAM_STARS_PRICE`).
+
+### Настройка
+
+1. Создайте бота у [@BotFather](https://t.me/BotFather) и скопируйте токен.
+2. В BotFather выполните `/setdomain` и добавьте домен, на котором работает приложение
+   (иначе виджет входа не загрузится).
+3. Задайте переменные окружения:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:AA...
+TELEGRAM_BOT_USERNAME=MyEspanolRealBot
+TELEGRAM_STARS_PRICE=500
+NEXT_PUBLIC_SITE_URL=https://your-domain.com
+```
+
+4. Один раз зарегистрируйте платёжный вебхук:
+
+```bash
+curl "https://your-domain.com/api/telegram/setup?secret=$TELEGRAM_BOT_TOKEN"
+```
+
+### Как это работает
+
+```
+Кнопка «Оплатить 500 ⭐»
+   → POST /api/payments/telegram/stars        создаёт заказ + invoice link (createInvoiceLink, XTR)
+   → Telegram.WebApp.openInvoice() / новая вкладка
+   → Telegram присылает pre_checkout_query    POST /api/telegram/webhook → answerPreCheckoutQuery
+   → Telegram присылает successful_payment    POST /api/telegram/webhook → заказ = paid
+   → сервер выдаёт лицензионный ключ (licenses) и пишет его пользователю в чат
+   → клиент активирует ключ локально → все 45 уроков открыты
+```
+
+Резервная проверка без вебхука: `getStarTransactions` — сопоставление по payload
+(`source.invoice_payload`), либо по сумме + дате + Telegram ID покупателя.
+
+### Вход
+
+* **Login Widget** (`data-onauth`) → `POST /api/telegram/auth` — подпись `hash` проверяется
+  HMAC-SHA256 c ключом `SHA256(bot_token)`; бот-токен остаётся на сервере.
+* **Mini App** → `POST /api/telegram/auth/init` с `Telegram.WebApp.initData`.
+* Сессия — подписанная HttpOnly-cookie (`er_session`, HMAC, 30 дней), без таблицы сессий.
+* Вход автоматически восстанавливает купленный Premium на любом устройстве.
+
+### API
+
+| Метод | Маршрут | Назначение |
+| --- | --- | --- |
+| POST | `/api/telegram/auth` | вход через Login Widget |
+| GET | `/api/telegram/auth` | вход через redirect (`data-auth-url`) |
+| DELETE | `/api/telegram/auth` | выход |
+| POST | `/api/telegram/auth/init` | вход из Mini App (`initData`) |
+| GET | `/api/telegram/session` | текущий аккаунт, состояние Premium, цена в звёздах |
+| POST | `/api/payments/telegram/stars` | создать счёт на 500 ⭐ |
+| GET/POST | `/api/payments/telegram/order` | статус заказа + выдача лицензии |
+| POST | `/api/telegram/webhook` | подтверждение оплаты от Telegram |
+| GET | `/api/telegram/setup` | регистрация вебхука (нужен `ADMIN_SECRET`) |
+| POST | `/api/licenses/activate` | авторизованная проверка ключа |
+| GET | `/api/lessons/[n]` | выдача полного урока по праву доступа |
+
+### Защита платного контента
+
+Серверная сборка не отдаёт фразы платных уроков в HTML: `/lesson/8…45` содержит только заголовок,
+описание и 2 фразы-тизера (для индексации). Полный урок приходит из `GET /api/lessons/[n]`
+после подтверждения права — либо по ключу `?key=`, либо по Telegram-сессии с оплаченным заказом.
+
+* `PROTECT_PREMIUM_CONTENT=false` — отключить защиту (отдать всё в HTML).
+* `STATIC_EXPORT=true` — защита автоматически выключается: офлайн-сборка содержит все уроки целиком.
+
+Проверено тестом: в HTML нет фраз после тизера, авторского комментария и пула дистракторов
+из других уроков.
+
+Замена на Stripe или другой провайдер = замена одного файла
+(`src/lib/payments/catalog.ts` + адаптер в `src/app/api/payments/...`), фронтенд не меняется.
+
+### Проверка платежного флоу локально
+
+Скрипт поднимает мок Telegram Bot API и проходит весь путь: вход → счёт → вебхук → лицензия.
+
+```bash
+npm run build
+TELEGRAM_BOT_TOKEN=7000000001:test-token-for-local-mock \
+TELEGRAM_API_URL=http://127.0.0.1:4010 \
+SESSION_SECRET=test npx next start -p 3100 &
+
+TELEGRAM_BOT_TOKEN=7000000001:test-token-for-local-mock \
+TELEGRAM_API_URL=http://127.0.0.1:4010 \
+node scripts/e2e-telegram-stars.mjs http://127.0.0.1:3100
+```
+
+Проверяется 29 утверждений: подпись Login Widget, отклонение подделанных данных, вход из Mini App
+(`initData`), создание счёта на 500 ⭐, `pre_checkout_query`, `successful_payment`, выдача ключа,
+соответствие ключа офлайн-чексумме, активация, отказ анониму и резервная проверка через
+`getStarTransactions` без вебхука.
+
+### Возвраты
+
+```sql
+-- найти заказ
+SELECT id, payload, charge_id, status FROM orders WHERE user_id = <id>;
+```
+Затем `refundStarPayment(user_id, telegram_payment_charge_id)` и отметьте заказ как `refunded`.
 
 ## Добавление уроков (масштаб до 500+)
 
@@ -70,64 +175,21 @@ Postgres + несколько API-роутов добавлены **только
 
 ```bash
 npm install
-npm run dev                 # разработка
-npm run build               # обычная сборка (режим платформенного превью с /api/health)
-STATIC_EXPORT=true npm run build   # статический экспорт в ./out
+npm run dev                          # разработка
+npm run build                        # полная сборка: Next-сервер + Telegram API + БД
+npx drizzle-kit push                 # применить схему (telegram_users, orders, licenses)
+node scripts/build-static.mjs        # чистый статический экспорт в ./out (офлайн-версия)
+node scripts/e2e-telegram-stars.mjs  # e2e-проверка оплаты звёздами на мок-сервере
 ```
 
-Статическую папку `out/` можно выложить на **Netlify**, **Cloudflare Pages**, **GitHub Pages** или **Render Static**.
-Для GitHub Pages задайте `NEXT_PUBLIC_SITE_URL` (домен сайта) перед сборкой — он используется в canonical, OG и sitemap.
+**Серверный режим** (нужен для Telegram-входа и оплаты звёздами): Render, Railway, Fly.io, Vercel,
+Netlify Functions. Примените схему: `npx drizzle-kit push`.
 
-## Telegram: вход и оплата звёздами (500 ⭐ за Premium)
+**Статический режим**: `node scripts/build-static.mjs` временно убирает `src/app/api` (API-маршруты
+нельзя экспортировать в статические файлы) и собирает чистый офлайн-тренажёр в `out/`. В нём доступны
+все уроки, упражнения, прогресс и офлайн-активация лицензионного ключа.
 
-После урока 7 в приложении доступны **два способа** открыть Premium: лицензионный ключ (offline) и **оплата Telegram Stars** —
-она требует входа через Telegram (Login Widget на сайте или автоматически внутри Telegram Mini App).
-
-### Как это работает
-
-1. **Вход.** На сайте пользователь нажимает кнопку официального Telegram Login Widget → Telegram подписывает данные →
-   мы проверяем подпись на сервере (`src/lib/telegram/verify.ts`) и выдаём httpOnly-сессионную куку.
-   Если приложение открыто как Telegram Mini App, вход происходит автоматически через `WebApp.initData` — без кнопок.
-2. **Оплата.** Клиент запрашивает `/api/telegram/create-invoice` → сервер вызывает `createInvoiceLink` Bot API
-   (валюта `XTR`, 500 звёзд, без `provider_token` — Stars не требуют платёжного провайдера).
-   Внутри Mini App счёт открывается нативно через `Telegram.WebApp.openInvoice()`; в обычном браузере — открывается
-   ссылка на бота в новой вкладке.
-3. **Подтверждение.** Telegram шлёт вебхуку `pre_checkout_query` (мы отвечаем `ok:true` за секунды) и затем
-   `successful_payment` — только тогда сервер помечает пользователя premium в базе. Клиент никогда не может
-   «сам себе» выдать доступ — источник истины всегда сервер + Postgres (`telegram_users`, `telegram_payments`).
-
-### Настройка (BotFather)
-
-```
-/newbot                → создать бота, получить TELEGRAM_BOT_TOKEN
-/setdomain              → указать https-домен сайта (нужно для Login Widget)
-/newapp или Bot Settings → Menu Button → указать URL Mini App (тот же сайт), если хотите открывать курс внутри Telegram
-```
-
-Заполните `.env`:
-
-```
-TELEGRAM_BOT_TOKEN=123456:AA...
-NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=your_bot_username   # без @
-TELEGRAM_WEBHOOK_SECRET=любая-случайная-строка         # опционально, но рекомендуется
-AUTH_SECRET=ещё-одна-случайная-строка                  # подпись сессионной куки
-NEXT_PUBLIC_SITE_URL=https://ваш-домен
-```
-
-Затем зарегистрируйте вебхук (один раз на прод-домене):
-
-```bash
-TELEGRAM_BOT_TOKEN=123456:AA... node scripts/setup-telegram-webhook.mjs https://ваш-домен ваш-webhook-secret
-```
-
-Если переменные не заданы — Telegram-блоки в интерфейсе автоматически скрываются (`/api/telegram/config` возвращает
-`enabled:false`), а лицензионный ключ продолжает работать как раньше. Ничего не ломается на хостингах без бота.
-
-### Важно про статический экспорт
-
-Вход и оплата требуют секрет бота, куки и базу данных — то есть Node.js-сервер (обычная сборка `next build`/`next start`,
-как в `build_and_start`). Режим `STATIC_EXPORT=true` (чисто статический сайт без сервера) по-прежнему доступен для
-бесплатных хостингов, но в нём работает только оплата лицензионным ключом — `/api/telegram/*` недоступны без сервера.
+Для GitHub Pages задайте `NEXT_PUBLIC_SITE_URL` перед сборкой — он используется в canonical, OG и sitemap.
 
 ## Лицензионные ключи
 
@@ -149,21 +211,34 @@ src/lib/content/          # загрузчик контента (fs, тольк�
 src/lib/exercises/        # генератор упражнений из фраз (данные → упражнения)
 src/lib/srs.ts            # интервальное повторение
 src/lib/progress/         # состояние, редьюсер, селекторы, localStorage
-src/lib/license.ts        # адаптер монетизации №1: офлайн-ключ (замена на Stripe = 1 файл)
-src/lib/telegram/         # адаптер монетизации №2: Telegram Login + Stars (verify/session/bot-api/store)
-src/app/api/telegram/     # login-widget, miniapp-auth, create-invoice, webhook, status, session
-src/db/schema.ts          # telegram_users, telegram_payments (единственные таблицы БД)
+src/lib/license.ts        # адаптер монетизации (замена на Stripe = 1 файл)
 src/components/trainer/   # движок тренировки (универсальный для уроков/экзаменов/повторения)
-src/components/telegram/  # Login Widget + Stars paywall UI
 src/components/learn/     # экраны приложения
 src/app/lesson/[n]        # статический URL /lesson/1 … /lesson/45
 src/app/exam/[n]          # экзамены каждые 5 уроков
 ```
 
-Чтобы добавить Supabase, полноценные аккаунты, Stripe, AI-диалоги, распознавание речи или учительскую панель,
-достаточно заменить `src/lib/progress/storage.ts` (синхронизация прогресса) и расширить `src/lib/telegram/store.ts` —
-фронтенд, контент и остальная монетизация остаются без изменений. Ключ и Stars — два независимых, взаимозаменяемых
-адаптера доступа: `useProgress().premium` объединяет оба источника (`state.license || telegram.premium`).
+```
+data/                     # весь контент (JSON)
+src/lib/content/          # загрузчик контента (fs, только build-time) + типы + course.config
+src/lib/exercises/        # генератор упражнений из фраз (данные → упражнения)
+src/lib/srs.ts            # интервальное повторение
+src/lib/progress/         # состояние, редьюсер, селекторы, localStorage
+src/lib/telegram/         # проверка подписи, Bot API клиент, Mini App мост
+src/lib/payments/catalog  # товары и цены (500 ⭐)
+src/lib/session.ts        # подписанная cookie-сессия
+src/lib/license.ts        # офлайн-проверка ключа
+src/server/               # пользователи, заказы, лицензии, аккаунт-пейлоад
+src/app/api/              # Telegram auth + Stars payment + webhook + licenses
+src/components/trainer/   # движок тренировки (универсальный для уроков/экзаменов/повторения)
+src/components/learn/     # экраны приложения
+src/app/lesson/[n]        # статический URL /lesson/1 … /lesson/45
+src/app/exam/[n]          # экзамены каждые 5 уроков
+```
+
+Чтобы добавить Supabase, Stripe, AI-диалоги, распознавание речи или учительскую панель, достаточно
+заменить `src/lib/progress/storage.ts` (синхронизация) и `src/lib/payments/catalog.ts` (оплата) —
+фронтенд и контент остаются без изменений.
 
 ## Права
 

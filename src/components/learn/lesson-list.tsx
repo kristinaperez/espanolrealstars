@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Check, Lock, Search } from "lucide-react";
 import { Badge, Card, Input, ProgressBar } from "@/components/ui/card";
 import { useProgress } from "@/components/providers/progress-provider";
-import { categoryById, milestones } from "@/lib/content/config";
+import { categoryById, milestones, FREE_LESSON_COUNT, STARS_PRICE } from "@/lib/content/config";
 import { cn } from "@/lib/utils";
 
 export function LessonList({ examBlocks }: { examBlocks: { block: number; fromLesson: number; toLesson: number; phraseCount: number }[] }) {
@@ -175,9 +175,9 @@ export function LessonList({ examBlocks }: { examBlocks: { block: number; fromLe
         </div>
         {!premium ? (
           <p className="text-sm text-muted">
-            🔒 После урока 7 курс открывается разовой покупкой —{" "}
+            🔒 После урока {FREE_LESSON_COUNT} курс открывается разовой покупкой —{" "}
             <Link href="/learn/settings#premium" className="font-bold text-primary underline">
-              15 €
+              {STARS_PRICE} ⭐ в Telegram
             </Link>
             .
           </p>

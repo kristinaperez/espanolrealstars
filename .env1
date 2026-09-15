@@ -1,0 +1,5 @@
+TELEGRAM_BOT_TOKEN=123456:8628316095:AAHfCOr2GNET71fDTSS5yedev5Bv-esiiOQ
+NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=EspanolFrasebot   # без @
+TELEGRAM_WEBHOOK_SECRET=pY7_zN8k-Qx2mV5w9L_tB3rX1sJ6gC4d         # опционально, но рекомендуется
+AUTH_SECRET=b9f48a1d7c3e5b6a0f2e4d8c9a1b3f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a                  # подпись сессионной куки
+NEXT_PUBLIC_SITE_URL=https://espanolfrase.netlify.app

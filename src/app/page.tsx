@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
 import { DemoLesson } from "@/components/landing/demo";
 import { Badge, Card } from "@/components/ui/card";
-import { categories, course, courseConfig, milestones, pricing } from "@/lib/content/config";
+import { categories, course, courseConfig, milestones, payments, pricing } from "@/lib/content/config";
 import { getCourseStats, getDistractorPool, getLesson, getLessonMetas } from "@/lib/content/loader";
 
 export const metadata: Metadata = {
@@ -246,7 +246,9 @@ export default function LandingPage() {
       {/* ---------------- pricing ---------------- */}
       <section id="pricing" className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
         <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Стоимость</h2>
-        <p className="mt-2 text-muted">Никаких подписок. Premium — разовая оплата {course.licensePriceEur} € навсегда.</p>
+        <p className="mt-2 text-muted">
+          Никаких подписок. Premium — разовая покупка за {payments.starsPrice} ⭐ в Telegram.
+        </p>
         <div className="mt-8 grid gap-5 lg:grid-cols-2">
           <Card className="flex flex-col gap-4">
             <div>
@@ -275,15 +277,21 @@ export default function LandingPage() {
             <div>
               <h3 className="text-xl font-extrabold tracking-tight">{pricing.premium.title}</h3>
               <p className="text-sm text-muted">{pricing.premium.period}</p>
-              <p className="mt-3 text-4xl font-extrabold">
-                {pricing.premium.price}
-                <span className="text-base font-semibold text-muted"> единоразово</span>
+              <p className="mt-3 flex flex-wrap items-baseline gap-2">
+                <span className="text-4xl font-extrabold">{payments.starsPrice} ⭐</span>
+                <span className="text-base font-semibold text-muted">единоразово</span>
               </p>
-              {pricing.premium.starsPrice ? (
-                <p className="mt-1 text-sm font-bold text-[#229ED9]">
-                  или {pricing.premium.starsPrice} ⭐ Telegram Stars
-                </p>
-              ) : null}
+              <ul className="mt-3 flex flex-wrap gap-2">
+                {payments.methods.map((method) => (
+                  <li
+                    key={method.id}
+                    className="rounded-full border border-line bg-background-soft px-3 py-1 text-xs font-bold"
+                  >
+                    {method.id === "telegram_stars" ? "⭐ " : "🔑 "}
+                    {method.label}
+                  </li>
+                ))}
+              </ul>
             </div>
             <ul className="flex flex-col gap-2 text-sm">
               {pricing.premium.features.map((feature) => (

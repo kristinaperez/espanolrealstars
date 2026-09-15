@@ -60,7 +60,22 @@ export interface XpConfig {
   dailyGoalBonus: number;
 }
 
+export interface PaymentMethodConfig {
+  id: "telegram_stars" | "license_key" | string;
+  label: string;
+  note: string;
+  enabled: boolean;
+}
+
+export interface PaymentsConfig {
+  premiumProductId: string;
+  starsPrice: number;
+  currency: string;
+  methods: PaymentMethodConfig[];
+}
+
 export interface CourseConfig {
+  payments: PaymentsConfig;
   course: {
     id: string;
     title: string;
@@ -72,7 +87,6 @@ export interface CourseConfig {
     examEvery: number;
     quizQuestionCount: number;
     examQuestionCount: number;
-    licensePriceEur: number;
     author: { name: string; method: string };
   };
   categories: CategoryConfig[];
@@ -87,16 +101,7 @@ export interface CourseConfig {
   achievements: AchievementConfig[];
   pricing: {
     free: { id: string; title: string; price: string; period: string; features: string[]; cta: string };
-    premium: {
-      id: string;
-      title: string;
-      price: string;
-      starsPrice?: number;
-      period: string;
-      features: string[];
-      cta: string;
-      note: string;
-    };
+    premium: { id: string; title: string; price: string; period: string; features: string[]; cta: string; note: string };
   };
   testimonials: { name: string; role: string; quote: string; placeholder: boolean }[];
   faq: { q: string; a: string }[];
@@ -118,6 +123,10 @@ export const XP_PER_LEVEL = courseConfig.xpPerLevel;
 
 export const categoryById = new Map(categories.map((c) => [c.id, c]));
 export const milestoneById = new Map(milestones.map((m) => [m.id, m]));
+
+export const payments = courseConfig.payments;
+export const STARS_PRICE = payments.starsPrice;
+export const PREMIUM_PRODUCT_ID = payments.premiumProductId;
 
 export const FREE_LESSON_COUNT = course.freeLessonCount;
 export const EXAM_EVERY = course.examEvery;

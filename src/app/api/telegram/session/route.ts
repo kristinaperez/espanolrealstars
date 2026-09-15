@@ -1,25 +1,25 @@
-import { NextResponse } from "next/server";
-import { getTelegramUser } from "@/lib/telegram/store";
-import { verifySessionToken } from "@/lib/telegram/session";
-import { SESSION_COOKIE } from "@/lib/telegram/config";
+import type { NextRequest } from "next/server";
+import { jsonResponse } from "@/server/http";
+import { errorResponse } from "@/server/http";
+import { currentUser } from "@/server/http";
+import { buildAccountPayload } from "@/server/account";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const token = readCookie(cookieHeader, SESSION_COOKIE);
-  const telegramId = verifySessionToken(token);
-  if (!telegramId) return NextResponse.json({ user: null });
-
+/** GET — current account, premium state and the Stars price. */
+export async function GET(request: NextRequest) {
   try {
-    const user = await getTelegramUser(telegramId);
-    return NextResponse.json({ user });
+    const { db } = await import("@/db");
+    await db.execute(await (await import("drizzle-orm")).sql`select 1`);
   } catch {
-    return NextResponse.json({ user: null });
+    return errorResponse("Server persistence is unavailable. The offline trainer continues to work.", 503);
   }
-}
 
-function readCookie(header: string, name: string): string | null {
-  const match = header.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
+  const user = await currentUser(request);
+  try {
+    return jsonResponse(await buildAccountPayload(user));
+  } catch {
+    // Database unavailable — the app keeps working as a local/offline trainer.
+    return jsonResponse(await buildAccountPayload(null));
+  }
 }

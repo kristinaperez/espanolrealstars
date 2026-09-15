@@ -16,7 +16,6 @@ import { reduce } from "@/lib/progress/reducer";
 import { computeStats, hasAccess, isPremium } from "@/lib/progress/selectors";
 import { loadState, saveState } from "@/lib/progress/storage";
 import { defaultState, type ProgressEvent, type ProgressState } from "@/lib/progress/types";
-import { useTelegram } from "@/components/providers/telegram-provider";
 
 interface ProgressContextValue {
   ready: boolean;
@@ -44,7 +43,6 @@ export function ProgressProvider({
   const [ready, setReady] = useState(false);
   const [newAchievements, setNewAchievements] = useState<string[]>([]);
   const ref = useRef<ProgressState>(state);
-  const telegram = useTelegram();
 
   useEffect(() => {
     const loaded = loadState();
@@ -97,12 +95,12 @@ export function ProgressProvider({
       state,
       metas,
       dispatch,
-      premium: isPremium(state) || telegram.premium,
-      access: (lesson: number) => hasAccess(state, lesson) || telegram.premium,
+      premium: isPremium(state),
+      access: (lesson: number) => hasAccess(state, lesson),
       newAchievements,
       clearAchievement,
     }),
-    [ready, state, metas, dispatch, newAchievements, clearAchievement, telegram.premium],
+    [ready, state, metas, dispatch, newAchievements, clearAchievement],
   );
 
   return <ProgressContext.Provider value={value}>{children}</ProgressContext.Provider>;

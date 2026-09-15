@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { Check, Download, KeyRound, ShieldCheck, Upload } from "lucide-react";
+import { Check, Download, KeyRound, ShieldCheck, Star, Upload } from "lucide-react";
 import { Badge, Card, Input, Switch } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { TelegramLogin } from "@/components/auth/telegram-login";
+import { TelegramStarsPayment } from "@/components/payments/telegram-stars";
 import { useProgress } from "@/components/providers/progress-provider";
-import { useTelegram } from "@/components/providers/telegram-provider";
-import { StarsPaywall } from "@/components/telegram/stars-paywall";
+import { useAuth } from "@/components/providers/auth-provider";
 import { course, pricing } from "@/lib/content/config";
 import { formatKey, isValidKey } from "@/lib/license";
 import { exportProgress, importProgress } from "@/lib/progress/storage";
@@ -15,17 +16,52 @@ import { cn } from "@/lib/utils";
 
 export function SettingsView() {
   const { state, dispatch, ready, premium } = useProgress();
-  const { config: telegramConfig, ready: telegramReady, premium: telegramPremium } = useTelegram();
+  const { user, starsPrice, status: authStatus } = useAuth();
   const [key, setKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [keyNotice, setKeyNotice] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const activate = () => {
-    if (isValidKey(key)) {
-      dispatch({ type: "activate", key: formatKey(key) });
-      setKeyError(null);
+  /** Prefer the authoritative server check, fall back to the offline checksum. */
+  const activate = async () => {
+    const clean = key.trim();
+    if (clean.length === 0) return;
+    setKeyError(null);
+    setKeyNotice(null);
+
+    if (authStatus === "server") {
+      try {
+        const response = await fetch("/api/licenses/activate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key: clean }),
+        });
+        const payload = (await response.json()) as { ok: boolean; valid?: boolean; key?: string; error?: string };
+        if (payload.valid && payload.key) {
+          dispatch({ type: "activate", key: payload.key });
+          setKey("");
+          setKeyNotice("Ключ подтверждён на сервере. Premium активирован.");
+          return;
+        }
+        if (isValidKey(clean)) {
+          // Valid format but unknown to the database.
+          dispatch({ type: "activate", key: formatKey(clean) });
+          setKey("");
+          setKeyNotice("Ключ активирован локально (офлайн-проверка формата).");
+          return;
+        }
+        setKeyError("Ключ не найден. Формат: XXXX-XXXX-XXXX");
+        return;
+      } catch {
+        // fall through to the offline check
+      }
+    }
+
+    if (isValidKey(clean)) {
+      dispatch({ type: "activate", key: formatKey(clean) });
       setKey("");
+      setKeyNotice("Ключ активирован локально (офлайн-режим).");
     } else {
       setKeyError("Ключ не распознан. Формат: XXXX-XXXX-XXXX");
     }
@@ -62,9 +98,20 @@ export function SettingsView() {
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-muted">Настройки</p>
         <h1 className="mt-1 text-3xl font-extrabold tracking-tight sm:text-4xl">Профиль и доступ</h1>
         <p className="mt-2 text-sm text-muted">
-          Всё хранится локально в браузере — без аккаунтов и серверов. Можно перенести прогресс на другое устройство.
+          Прогресс хранится локально в браузере. Аккаунт Telegram нужен только для оплаты звёздами и восстановления
+          покупки на другом устройстве.
         </p>
       </header>
+
+      <Card className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-bold">Аккаунт Telegram</p>
+          <Badge tone={authStatus === "server" ? "success" : "neutral"}>
+            {authStatus === "server" ? "онлайн" : authStatus === "loading" ? "проверка…" : "локальный режим"}
+          </Badge>
+        </div>
+        <TelegramLogin />
+      </Card>
 
       <Card className="flex flex-col gap-4">
         <p className="text-sm font-bold">Ученик</p>
@@ -139,68 +186,91 @@ export function SettingsView() {
         ) : null}
       </Card>
 
-      <Card id="premium" className={premium ? "border-success/40 bg-success/8" : "border-primary/35 bg-primary/8"}>
-        <div className="flex items-center gap-2">
-          {premium ? <ShieldCheck className="h-5 w-5 text-success" /> : <KeyRound className="h-5 w-5 text-primary" />}
-          <p className="text-sm font-bold">
-            {premium ? "Premium активен" : `Premium · 15 € или ${telegramConfig.starsPrice} ⭐`}
-          </p>
+      {/* ---------------- Premium / оплата ---------------- */}
+      <Card
+        id="premium"
+        className={premium ? "border-success/40 bg-success/8" : "border-primary/35 bg-primary/8"}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {premium ? (
+              <ShieldCheck className="h-5 w-5 text-success" />
+            ) : (
+              <Star className="h-5 w-5 text-primary" />
+            )}
+            <p className="text-sm font-bold">
+              {premium ? "Premium активен" : `Premium · ${starsPrice} ⭐`}
+            </p>
+          </div>
+          {user ? (
+            <Badge tone="info">
+              {user.username ? `@${user.username}` : `Telegram ${user.telegramId}`}
+            </Badge>
+          ) : null}
         </div>
 
         {premium ? (
           <>
             <p className="mt-3 text-sm text-muted">
-              Все {course.freeLessonCount > 0 ? "45" : ""} уроков, экзамены и система повторения открыты. Спасибо за
-              поддержку проекта!
+              Все уроки, экзамены и система повторения открыты. Спасибо за поддержку проекта!
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {state.license ? (
-                <>
-                  <Badge tone="success">
-                    <Check className="h-3.5 w-3.5" /> {state.license.key}
-                  </Badge>
-                  <button
-                    type="button"
-                    onClick={() => dispatch({ type: "deactivate" })}
-                    className="text-xs font-bold text-muted underline"
-                  >
-                    Отключить ключ
-                  </button>
-                </>
-              ) : telegramPremium ? (
                 <Badge tone="success">
-                  <Check className="h-3.5 w-3.5" /> Оплачено через Telegram Stars
+                  <Check className="h-3.5 w-3.5" /> {state.license.key}
                 </Badge>
               ) : null}
+              <button
+                type="button"
+                onClick={() => dispatch({ type: "deactivate" })}
+                className="text-xs font-bold text-muted underline"
+              >
+                Отключить ключ на этом устройстве
+              </button>
+            </div>
+            <div className="mt-4">
+              <TelegramStarsPayment compact />
             </div>
           </>
         ) : (
           <>
-            {telegramReady && telegramConfig.enabled ? (
-              <div className="mt-4">
-                <StarsPaywall />
-              </div>
-            ) : null}
-            <p className="mt-5 text-xs font-bold uppercase tracking-[0.14em] text-muted">Или лицензионный ключ</p>
             <p className="mt-3 text-sm text-muted">
-              Введите лицензионный ключ формата XXXX-XXXX-XXXX. Архитектура уже готова к подключению Stripe: ключ
-              легко заменяется оплатой.
+              После урока {course.freeLessonCount} курс открывается разовой покупкой. Можно оплатить{" "}
+              {starsPrice} звёздами Telegram или ввести лицензионный ключ.
             </p>
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <Input
-                value={key}
-                onChange={(event) => {
-                  setKey(event.target.value.toUpperCase());
-                  setKeyError(null);
-                }}
-                placeholder="XXXX-XXXX-XXXX"
-                className="font-mono tracking-widest"
-              />
-              <Button size="lg" onClick={activate}>
-                Активировать
-              </Button>
+
+            <div className="mt-4">
+              <TelegramStarsPayment />
             </div>
-            {keyError ? <p className="mt-2 text-sm font-semibold text-danger">{keyError}</p> : null}
+
+            <details className="mt-5 rounded-3xl border border-line bg-surface p-4">
+              <summary className="cursor-pointer list-none text-sm font-bold">
+                <KeyRound className="mr-1.5 inline h-4 w-4 text-primary" />
+                У меня есть лицензионный ключ
+              </summary>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <Input
+                  value={key}
+                  onChange={(event) => {
+                    setKey(event.target.value.toUpperCase());
+                    setKeyError(null);
+                    setKeyNotice(null);
+                  }}
+                  placeholder="XXXX-XXXX-XXXX"
+                  className="font-mono tracking-widest"
+                />
+                <Button size="lg" onClick={() => void activate()}>
+                  Активировать
+                </Button>
+              </div>
+              {keyError ? <p className="mt-2 text-sm font-semibold text-danger">{keyError}</p> : null}
+              {keyNotice ? <p className="mt-2 text-sm font-semibold text-success">{keyNotice}</p> : null}
+              <p className="mt-2 text-xs text-muted">
+                Ключ приходит в чат с ботом после оплаты звёздами. Архитектура готова к подключению Stripe: ключ
+                легко заменяется картой.
+              </p>
+            </details>
+
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl border border-line bg-surface p-4">
                 <p className="text-sm font-bold">{pricing.free.title}</p>
@@ -213,7 +283,9 @@ export function SettingsView() {
               </div>
               <div className="rounded-2xl border-2 border-primary/40 bg-surface p-4">
                 <p className="text-sm font-bold">{pricing.premium.title}</p>
-                <p className="text-xs text-muted">{pricing.premium.period}</p>
+                <p className="text-xs text-muted">
+                  {starsPrice} ⭐ · {pricing.premium.period}
+                </p>
                 <ul className="mt-2 flex flex-col gap-1 text-sm text-muted">
                   {pricing.premium.features.slice(0, 4).map((feature) => (
                     <li key={feature}>· {feature}</li>

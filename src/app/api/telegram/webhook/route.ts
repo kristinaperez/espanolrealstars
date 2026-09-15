@@ -1,72 +1,87 @@
-import { NextResponse } from "next/server";
-import { webhookSecret } from "@/lib/telegram/config";
-import { answerPreCheckoutQuery } from "@/lib/telegram/bot-api";
-import { grantPremium, markPaymentPaid } from "@/lib/telegram/store";
+import type { NextRequest } from "next/server";
+import {
+  answerPreCheckoutQuery,
+  sendMessage,
+  type TgUpdate,
+} from "@/lib/telegram/bot-api";
+import { jsonResponse, readJsonBody } from "@/server/http";
+import { errorResponse } from "@/server/http";
+import { fulfillOrder, getOrderByPayload } from "@/server/orders";
 
 export const dynamic = "force-dynamic";
 
-interface TelegramUpdate {
-  pre_checkout_query?: {
-    id: string;
-    from: { id: number };
-    invoice_payload: string;
-  };
-  message?: {
-    from?: { id: number };
-    successful_payment?: {
-      invoice_payload: string;
-      telegram_payment_charge_id: string;
-      provider_payment_charge_id?: string;
-      total_amount: number;
-      currency: string;
-    };
-  };
-}
-
 /**
- * Telegram bot webhook.
+ * POST — Telegram bot webhook. This is the authoritative payment confirmation:
  *
- * Register with: `POST /setWebhook` pointing here, ideally with a
- * `secret_token` so we can verify the `X-Telegram-Bot-Api-Secret-Token`
- * header (see scripts/setup-telegram-webhook.mjs).
+ *   pre_checkout_query  → answerPreCheckoutQuery(ok)
+ *   successful_payment  → mark the order paid + issue a license key
+ *
+ * Register it once with:
+ *   GET /api/telegram/setup?secret=<ADMIN_SECRET or bot token>
  */
-export async function POST(request: Request) {
-  const expectedSecret = webhookSecret();
-  if (expectedSecret) {
+export async function POST(request: NextRequest) {
+  try {
+    const { db } = await import("@/db");
+    await db.execute(await (await import("drizzle-orm")).sql`select 1`);
+  } catch {
+    return errorResponse("Server persistence is unavailable. The offline trainer continues to work.", 503);
+  }
+
+  const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (expected) {
     const provided = request.headers.get("x-telegram-bot-api-secret-token");
-    if (provided !== expectedSecret) {
-      return NextResponse.json({ ok: false }, { status: 401 });
+    if (provided !== expected) {
+      return new Response("forbidden", { status: 403 });
     }
   }
 
-  let update: TelegramUpdate;
-  try {
-    update = (await request.json()) as TelegramUpdate;
-  } catch {
-    return NextResponse.json({ ok: false }, { status: 400 });
-  }
+  const update = await readJsonBody<TgUpdate>(request);
+  if (!update) return jsonResponse({ ok: true, ignored: true });
 
   try {
-    // Telegram requires an answer within ~10s or the payment sheet fails.
     if (update.pre_checkout_query) {
-      await answerPreCheckoutQuery(update.pre_checkout_query.id, true);
+      const query = update.pre_checkout_query;
+      const order = await getOrderByPayload(query.invoice_payload);
+      const allowed = Boolean(order) && order?.status !== "paid";
+      await answerPreCheckoutQuery(
+        query.id,
+        allowed,
+        allowed ? undefined : "Заказ не найден или уже оплачен. Обновите страницу и попробуйте снова.",
+      );
+      return jsonResponse({ ok: true, handled: "pre_checkout_query" });
     }
 
     const payment = update.message?.successful_payment;
     if (payment) {
-      const telegramId = await markPaymentPaid({
-        payload: payment.invoice_payload,
-        telegramPaymentChargeId: payment.telegram_payment_charge_id,
-        providerPaymentChargeId: payment.provider_payment_charge_id,
-      });
-      if (telegramId) {
-        await grantPremium(telegramId, "stars");
+      const order = await getOrderByPayload(payment.invoice_payload);
+      if (order) {
+        const fulfilled = await fulfillOrder(order.id, payment.telegram_payment_charge_id);
+        const chatId = update.message?.chat?.id;
+        if (fulfilled && chatId) {
+          try {
+            await sendMessage(
+              chatId,
+              [
+                "🇪🇸 <b>Español Real · Premium активирован</b>",
+                "",
+                "Все уроки, экзамены и система повторения открыты.",
+                `Ключ доступа: <code>${fulfilled.license.key}</code>`,
+                "",
+                "Откройте приложение и введите ключ в разделе «Настройки → Premium»,",
+                "либо просто войдите через Telegram — доступ восстановится автоматически.",
+              ].join("\n"),
+            );
+          } catch {
+            /* messaging is best-effort */
+          }
+        }
       }
+      return jsonResponse({ ok: true, handled: "successful_payment" });
     }
   } catch (error) {
-    console.error("[telegram] webhook processing failed", error);
-    // Still return 200 so Telegram doesn't hammer retries for a logged bug.
+    // Never answer with 5xx for unknown update types: Telegram would retry forever.
+    return jsonResponse({ ok: true, error: (error as Error).message });
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonResponse({ ok: true, ignored: true });
 }

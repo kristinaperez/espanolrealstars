@@ -1,14 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import Script from "next/script";
+import { AuthProvider } from "@/components/providers/auth-provider";
 import { ProgressProvider } from "@/components/providers/progress-provider";
 import { PwaRegister } from "@/components/providers/pwa-register";
-import { TelegramProvider } from "@/components/providers/telegram-provider";
 import { getCourseStats, getLessonMetas } from "@/lib/content/loader";
-import { course } from "@/lib/content/config";
+import { course, payments } from "@/lib/content/config";
 import "./globals.css";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://espanol-real.example.com";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://espanol-real.example.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -78,15 +77,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       courseWorkload: "PT15M",
     },
     offers: [
-      { "@type": "Offer", price: "0", priceCurrency: "EUR", name: "Free" },
-      { "@type": "Offer", price: String(course.licensePriceEur), priceCurrency: "EUR", name: "Premium" },
+      { "@type": "Offer", price: "0", priceCurrency: "XTR", name: "Free" },
+      { "@type": "Offer", price: String(payments.starsPrice), priceCurrency: "XTR", name: "Premium" },
     ],
   };
 
   return (
     <html lang="ru" suppressHydrationWarning>
       <body>
-        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
@@ -98,9 +96,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        <TelegramProvider>
-          <ProgressProvider metas={metas}>{children}</ProgressProvider>
-        </TelegramProvider>
+        <ProgressProvider metas={metas}>
+          <AuthProvider>{children}</AuthProvider>
+        </ProgressProvider>
         <PwaRegister />
       </body>
     </html>

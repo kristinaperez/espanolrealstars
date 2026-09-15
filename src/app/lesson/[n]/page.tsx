@@ -4,13 +4,13 @@ import { AppShell } from "@/components/layout/app-shell";
 import { TrainerPage } from "@/components/trainer/trainer-page";
 import {
   getAdjacent,
-  getDistractorPool,
   getExamBlockForLesson,
   getLesson,
-  getLessonNumbers,
   getLessonMetas,
+  getLessonNumbers,
 } from "@/lib/content/loader";
 import { categoryById } from "@/lib/content/config";
+import { poolForLesson, protectLesson } from "@/lib/content/secure";
 
 export const dynamicParams = false;
 
@@ -45,15 +45,17 @@ export async function generateMetadata({
 export default async function LessonPage({ params }: { params: Promise<{ n: string }> }) {
   const { n } = await params;
   const number = Number(n);
-  const lesson = getLesson(number);
-  if (!lesson) notFound();
+  const source = getLesson(number);
+  if (!source) notFound();
 
-  const pool = getDistractorPool(number, 40);
+  // Premium phrases never reach the browser: they are fetched from
+  // /api/lessons/[n] once an entitlement is confirmed.
+  const { lesson, trimmed } = protectLesson(source);
+  const pool = poolForLesson(lesson, trimmed);
+
   const { next } = getAdjacent(number);
   const exam = getExamBlockForLesson(number);
   const metas = getLessonMetas();
-
-  // After this lesson the block exam becomes available.
   const examReady = exam ? number >= exam.toLesson && metas.length >= exam.toLesson : false;
 
   const jsonLd = {
@@ -62,8 +64,10 @@ export default async function LessonPage({ params }: { params: Promise<{ n: stri
     name: `Урок ${lesson.lesson}. ${lesson.title}`,
     description: lesson.summary,
     inLanguage: "es-RU",
-    teaches: lesson.phrases.map((phrase) => phrase.spanish).slice(0, 5),
+    teaches: lesson.phrases.slice(0, 3).map((phrase) => phrase.spanish),
     educationalLevel: lesson.difficulty,
+    isAccessibleForFree: !trimmed,
+    hasCourseInstance: { "@type": "CourseInstance", courseMode: "online" },
     isPartOf: { "@type": "Course", name: "Español Real" },
   };
 
@@ -74,6 +78,7 @@ export default async function LessonPage({ params }: { params: Promise<{ n: stri
         mode="lesson"
         lessons={[lesson]}
         pool={pool}
+        protectedContent={trimmed}
         nextHref={examReady && exam ? `/exam/${exam.block}` : next ? `/lesson/${next.lesson}` : undefined}
       />
     </AppShell>
